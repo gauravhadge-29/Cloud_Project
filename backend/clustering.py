@@ -4,7 +4,7 @@ import pickle
 
 import numpy as np
 from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
+from gensim.models import Word2Vec
 
 
 DEFAULT_SEED_CORPUS = [
@@ -28,21 +28,34 @@ class LogClusterer:
 
         self.vectorizer, self.model = self._load_or_bootstrap()
 
-    def _bootstrap_default_model(self) -> Tuple[TfidfVectorizer, KMeans]:
-        vectorizer = TfidfVectorizer(max_features=1500, ngram_range=(1, 2), stop_words="english")
-        x_seed = vectorizer.fit_transform(DEFAULT_SEED_CORPUS)
-        model = KMeans(n_clusters=min(self.default_clusters, len(DEFAULT_SEED_CORPUS)), random_state=42, n_init=10)
-        model.fit(x_seed)
-        self._persist(vectorizer, model)
-        return vectorizer, model
+    def _get_sentence_vectors(self, model: Word2Vec, corpus: List[str]) -> np.ndarray:
+        vectors = []
+        for line in corpus:
+            tokens = [t for t in line.lower().split() if t in model.wv]
+            if tokens:
+                vectors.append(np.mean([model.wv[t] for t in tokens], axis=0))
+            else:
+                vectors.append(np.zeros(model.vector_size))
+        return np.array(vectors)
 
-    def _persist(self, vectorizer: TfidfVectorizer, model: KMeans) -> None:
+    def _bootstrap_default_model(self) -> Tuple[Word2Vec, KMeans]:
+        tokenized_corpus = [line.lower().split() for line in DEFAULT_SEED_CORPUS]
+        w2v_model = Word2Vec(sentences=tokenized_corpus, vector_size=100, window=5, min_count=1, workers=2)
+        
+        x_seed = self._get_sentence_vectors(w2v_model, DEFAULT_SEED_CORPUS)
+        
+        kmeans = KMeans(n_clusters=min(self.default_clusters, len(DEFAULT_SEED_CORPUS)), random_state=42, n_init=10)
+        kmeans.fit(x_seed)
+        self._persist(w2v_model, kmeans)
+        return w2v_model, kmeans
+
+    def _persist(self, vectorizer: Word2Vec, model: KMeans) -> None:
         with self.vectorizer_path.open("wb") as f_vec:
             pickle.dump(vectorizer, f_vec)
         with self.model_path.open("wb") as f_model:
             pickle.dump(model, f_model)
 
-    def _load_or_bootstrap(self) -> Tuple[TfidfVectorizer, KMeans]:
+    def _load_or_bootstrap(self) -> Tuple[Word2Vec, KMeans]:
         try:
             with self.vectorizer_path.open("rb") as f_vec:
                 vectorizer = pickle.load(f_vec)
@@ -57,7 +70,12 @@ class LogClusterer:
             return np.array([]), np.array([])
 
         n_clusters = max(1, min(self.default_clusters, len(logs)))
-        x = self.vectorizer.fit_transform(logs)
+        
+        # Train Word2Vec
+        tokenized_logs = [line.lower().split() for line in logs]
+        self.vectorizer = Word2Vec(sentences=tokenized_logs, vector_size=100, window=5, min_count=1, workers=2)
+        
+        x = self._get_sentence_vectors(self.vectorizer, logs)
 
         self.model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         labels = self.model.fit_predict(x)
@@ -77,13 +95,18 @@ class LogClusterer:
         if x_matrix.shape[0] == 0:
             return {}
 
-        feature_names = self.vectorizer.get_feature_names_out()
         top_terms: Dict[str, List[str]] = {}
+        
+        # The centroids of KMeans
+        centroids = self.model.cluster_centers_
 
         for cluster_id in sorted(set(labels.tolist())):
-            cluster_rows = x_matrix[labels == cluster_id]
-            mean_weights = np.asarray(cluster_rows.mean(axis=0)).ravel()
-            top_idx = mean_weights.argsort()[::-1][:top_n]
-            top_terms[f"Cluster {cluster_id}"] = [feature_names[idx] for idx in top_idx if mean_weights[idx] > 0]
+            centroid = centroids[cluster_id]
+            # Find closest words in Word2Vec space to this centroid
+            try:
+                similar_words = self.vectorizer.wv.similar_by_vector(centroid, topn=top_n)
+                top_terms[f"Cluster {cluster_id}"] = [word for word, score in similar_words]
+            except Exception:
+                top_terms[f"Cluster {cluster_id}"] = []
 
         return top_terms

@@ -3,11 +3,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from clustering import LogClusterer
 from database import get_recent_analyses, save_analysis
 from log_processor import parse_log_text, preprocess_with_metadata
 from summarizer import InsightSummarizer
+from gemini_service import analyze_security_incidents
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -123,3 +125,12 @@ async def upload_logs(file: UploadFile = File(...)) -> Dict[str, Any]:
     save_result = save_analysis(response_payload)
     response_payload["storage"] = save_result
     return response_payload
+
+
+class AnomaliesPayload(BaseModel):
+    anomalies: List[Dict[str, Any]]
+
+@app.post("/api/analyze-security")
+async def analyze_security(payload: AnomaliesPayload) -> Dict[str, str]:
+    analysis = analyze_security_incidents(payload.anomalies)
+    return {"analysis": analysis}

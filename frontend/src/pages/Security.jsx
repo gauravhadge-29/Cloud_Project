@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from "react-markdown";
 import {
   ShieldAlert, ShieldCheck, AlertTriangle,
   Clock, Activity, ChevronDown, ChevronRight, ChevronLeft,
@@ -270,6 +271,8 @@ function AnomalyCard({ anomaly, idx }) {
 
 export default function SecurityPage({ analysis }) {
   const [page, setPage] = useState(1);
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const anomalies = useMemo(() => {
     if (!analysis || !analysis.processed_preview) return DEMO_ANOMALIES;
@@ -292,6 +295,26 @@ export default function SecurityPage({ analysis }) {
   const handlePageChange = (p) => {
     setPage(p);
     document.getElementById("security-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleAnalyzeSecurity = async () => {
+    if (anomalies.length === 0) return;
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    try {
+      const apiUrl = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+      const res = await fetch(`${apiUrl}/api/analyze-security`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anomalies: anomalies.slice(0, 10) })
+      });
+      const data = await res.json();
+      setAiAnalysis(data.analysis);
+    } catch (e) {
+      setAiAnalysis("Failed to connect to AI analysis service.");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   return (
@@ -317,13 +340,45 @@ export default function SecurityPage({ analysis }) {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="badge-error">{counts.HIGH} HIGH RISK</span>
             <span className="badge-warning">{counts.MEDIUM} MED RISK</span>
             <span className="badge-info">{counts.LOW} LOW RISK</span>
+            
+            <button 
+              onClick={handleAnalyzeSecurity}
+              disabled={isAnalyzing || anomalies.length === 0}
+              className="ml-2 inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 px-4 py-2 text-sm font-bold text-white shadow-soft transition-all hover:shadow-glow disabled:opacity-50"
+            >
+              {isAnalyzing ? (
+                <span className="animate-spin">⚙️</span>
+              ) : (
+                <span>Run Advanced Analysis</span>
+              )}
+            </button>
           </div>
         </div>
       </motion.div>
+
+      <AnimatePresence>
+        {aiAnalysis && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="rounded-2xl border border-indigo-200/50 bg-indigo-50/50 p-5 shadow-soft dark:border-indigo-500/20 dark:bg-indigo-900/10 mb-2">
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-indigo-900 dark:text-indigo-300">
+                Automated Security Insights
+              </h2>
+              <div className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-slate-300 leading-relaxed font-sans marker:text-indigo-500">
+                <ReactMarkdown>{aiAnalysis}</ReactMarkdown>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Anomaly Feed */}
       <div id="security-section" className="rounded-2xl border border-slate-200/60 bg-white/75 p-5 shadow-soft backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-900/50">

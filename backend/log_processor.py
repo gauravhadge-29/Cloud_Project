@@ -1,5 +1,7 @@
 import re
 from typing import Dict, List, Optional
+from drain3 import TemplateMiner
+from drain3.template_miner_config import TemplateMinerConfig
 
 
 TIMESTAMP_PATTERN = re.compile(
@@ -127,10 +129,10 @@ def preprocess_log_line(line: str) -> str:
     return line
 
 
-def normalize_to_template(clean_line: str) -> str:
-    template = NUMBER_PATTERN.sub("<num>", clean_line)
-    template = MULTISPACE_PATTERN.sub(" ", template).strip()
-    return template
+def build_drain_parser():
+    config = TemplateMinerConfig()
+    config.profiling_enabled = False
+    return TemplateMiner(persistence_handler=None, config=config)
 
 
 def tokenize_log_line(clean_line: str) -> List[str]:
@@ -148,17 +150,22 @@ def preprocess_logs(lines: List[str]) -> List[str]:
 
 def preprocess_with_metadata(lines: List[str]) -> List[Dict[str, str]]:
     records: List[Dict[str, str]] = []
+    miner = build_drain_parser()
+    
     for line in lines:
         clean_line = preprocess_log_line(line)
         if not clean_line:
             continue
+
+        result = miner.add_log_message(clean_line)
+        template = result.get("template_mined", clean_line)
 
         records.append(
             {
                 "raw": line,
                 "timestamp": extract_timestamp(line) or "N/A",
                 "clean": clean_line,
-                "template": normalize_to_template(clean_line),
+                "template": template,
                 "explanation": explain_log_line(line),
             }
         )

@@ -1,6 +1,16 @@
 from collections import Counter
 from typing import Dict, List, Tuple
+import networkx as nx
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from transformers import pipeline
 
+_t5_pipeline = None
+def get_t5_pipeline():
+    global _t5_pipeline
+    if _t5_pipeline is None:
+        _t5_pipeline = pipeline("summarization", model="t5-small", framework="pt")
+    return _t5_pipeline
 
 SEVERITY_KEYWORDS = {
     "ERROR": ["error", "failed", "exception", "timeout", "unavailable", "critical", "denied"],
@@ -98,39 +108,21 @@ class NaturalLanguageGenerator:
         severity: Dict[str, int],
         top_keywords: List[Dict[str, int]],
         cluster_count: int,
+        extractive_text: str = ""
     ) -> str:
-        """Generate a high-level executive summary of the log analysis."""
+        """Generate a high-level executive summary using abstractive T5 summarization."""
         error_count = severity.get("ERROR", 0)
-        warning_count = severity.get("WARNING", 0)
-        info_count = severity.get("INFO", 0)
-
-        # Build severity narrative
-        severity_parts = []
-        if error_count > 0:
-            severity_parts.append(f"{error_count} critical error{'s' if error_count != 1 else ''}")
-        if warning_count > 0:
-            severity_parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
-        if info_count > 0:
-            severity_parts.append(f"{info_count} info event{'s' if info_count != 1 else ''}")
-
-        severity_str = ", ".join(severity_parts) if severity_parts else "no significant events"
-
-        # Extract key themes from keywords
-        top_keywords_str = ", ".join([item["term"] for item in top_keywords[:3]])
-
-        # Build narrative
-        narrative = (
-            f"Log analysis processed {total_logs} entries and identified {severity_str}. "
-            f"The system exhibited behavior patterns involving {top_keywords_str}. "
-            f"Logs were grouped into {cluster_count} distinct behavior clusters. "
-        )
-
-        if error_count > 0:
-            narrative += "Immediate attention recommended for error resolution. "
-        elif warning_count > 0:
-            narrative += "Monitor system for potential issues. "
-        else:
-            narrative += "System operation appears normal. "
+        
+        prompt = f"summarize: The system processed {total_logs} logs with {error_count} errors. Main events: {extractive_text}"
+        try:
+            summarizer = get_t5_pipeline()
+            # T5 requires appropriate max length
+            input_len = len(prompt.split())
+            max_len = max(30, min(100, input_len + 20))
+            out = summarizer(prompt, max_length=max_len, min_length=10, do_sample=False)
+            narrative = out[0]['summary_text']
+        except Exception as e:
+            narrative = f"Analysis of {total_logs} logs (T5 abstractive generation failed: {str(e)}). Fallback: {extractive_text[:100]}..."
 
         return narrative.strip()
 
@@ -238,6 +230,22 @@ class InsightSummarizer:
         transitions = self.sequence_transitions(templates)
         prioritized_incidents = self.prioritize_incidents(records)
 
+        # Extractive Summarization (Centrality Ranking)
+        unique_templates = list(set(templates))
+        extractive_summary = "No significant patterns."
+        if len(unique_templates) > 1:
+            try:
+                tfidf = TfidfVectorizer().fit_transform(unique_templates)
+                sim_matrix = cosine_similarity(tfidf)
+                nx_graph = nx.from_numpy_array(sim_matrix)
+                scores = nx.pagerank(nx_graph)
+                ranked = sorted(((scores[i], s) for i, s in enumerate(unique_templates)), reverse=True)
+                extractive_summary = " ".join([s for score, s in ranked[:5]])
+            except Exception:
+                extractive_summary = " ".join(unique_templates[:5])
+        elif len(unique_templates) == 1:
+            extractive_summary = unique_templates[0]
+
         # Generate natural language narratives
         nlg = NaturalLanguageGenerator()
         executive_summary = nlg.generate_executive_summary(
@@ -245,6 +253,7 @@ class InsightSummarizer:
             severity=severity,
             top_keywords=top_terms,
             cluster_count=len(cluster_distribution),
+            extractive_text=extractive_summary
         )
         behavior_narrative = nlg.generate_behavior_narrative(top_terms, transitions)
 
