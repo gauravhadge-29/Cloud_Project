@@ -1,0 +1,10 @@
+2026-03-17 10:21:34 INFO instance i-09f2a12 started successfully from 10.10.1.23
+2026-03-17 10:21:41 WARNING CPU usage high on node worker-2 value=89%
+2026-03-17 10:22:11 ERROR request_id=7ff1a3c6db4e4e23a timeout while connecting to mongodb://internal-db
+2026-03-17 10:22:15 ERROR user auth failed for session_id=abc12495 from 192.168.10.7
+2026-03-17 10:22:47 INFO backup completed for bucket app-backups-us-east
+2026-03-17 10:23:02 WARNING memory usage high on api-service value=81%
+2026-03-17 10:23:29 ERROR exception raised in payment service trace_id=6bc6a53f-4f32-49ab-a09f-1f3934a7f631
+2026-03-17 10:24:01 INFO health check passed for gateway route /v1/orders
+2026-03-17 10:24:33 ERROR database connection failed retry_count=3 node=cluster-node-4
+2026-03-17 10:25:04 INFO autoscaling action completed adding 2 instances

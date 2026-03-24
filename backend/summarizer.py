@@ -1,0 +1,283 @@
+from collections import Counter
+from typing import Dict, List, Tuple
+
+
+SEVERITY_KEYWORDS = {
+    "ERROR": ["error", "failed", "exception", "timeout", "unavailable", "critical", "denied"],
+    "WARNING": ["warn", "warning", "slow", "degraded", "high", "retry"],
+    "INFO": ["info", "started", "completed", "healthy", "success"],
+}
+
+SEVERITY_PRIORITY = {"ERROR": 3, "WARNING": 2, "INFO": 1}
+
+# Natural language templates for narrative generation
+ERROR_NARRATIVES = {
+    "timeout": "The system experienced connection timeouts, indicating potential network issues or overloaded services.",
+    "failed": "Multiple failed operations were detected, suggesting service unavailability or resource exhaustion.",
+    "exception": "The system encountered unexpected exceptions, indicating runtime errors in application logic.",
+    "unavailable": "Critical services became unavailable during the analysis period, impacting system reliability.",
+    "denied": "Authentication or authorization failures were detected, suggesting permission or credential issues.",
+    "critical": "Critical errors occurred that require immediate attention to prevent system failure.",
+    "database": "Database operations encountered issues, potentially affecting data consistency and application performance.",
+    "connection": "Connection establishment failed, indicating network connectivity or service availability problems.",
+    "memory": "Memory-related errors were detected, suggesting potential memory leaks or resource constraints.",
+    "cpu": "CPU usage exceeded normal thresholds, indicating potential performance bottlenecks or inefficient processing.",
+}
+
+WARNING_NARRATIVES = {
+    "slow": "System response times were slower than normal, affecting user experience.",
+    "high": "Resource utilization reached elevated levels, approaching capacity limits.",
+    "retry": "Failed operations required retry attempts, indicating transient issues.",
+    "degraded": "System functionality was degraded, with reduced performance or availability.",
+}
+
+INFO_NARRATIVES = {
+    "started": "Services and processes started successfully.",
+    "completed": "Operations completed without errors.",
+    "healthy": "System health check passed, confirming normal operation.",
+    "success": "Actions executed successfully.",
+}
+
+
+class NaturalLanguageGenerator:
+    """Generates human-readable narratives from log analysis."""
+
+    @staticmethod
+    def generate_incident_narrative(incident: Dict[str, str], context: str = "") -> str:
+        """Return a clean, human-readable NLP explanation for a single incident."""
+        severity  = incident.get("severity", "UNKNOWN")
+        timestamp = incident.get("timestamp", "Unknown time")
+        message   = incident.get("message", "")
+
+        msg_lower = message.lower()
+
+        # Try to match a domain-specific narrative from ERROR_NARRATIVES
+        if severity == "ERROR":
+            for term, narrative in ERROR_NARRATIVES.items():
+                if term in msg_lower:
+                    return narrative
+
+        # Try WARNING_NARRATIVES
+        if severity == "WARNING":
+            for term, narrative in WARNING_NARRATIVES.items():
+                if term in msg_lower:
+                    return narrative
+
+        # INFO narratives
+        if severity == "INFO":
+            for term, narrative in INFO_NARRATIVES.items():
+                if term in msg_lower:
+                    return narrative
+
+        # Generic fallback
+        if severity == "ERROR":
+            return "An error occurred during this cloud operation. Review the API error code and check IAM permissions, resource availability, and service health."
+        if severity == "WARNING":
+            return "A warning was detected. Monitor this pattern — repeated occurrences may indicate a configuration issue or capacity constraint."
+        return "Routine cloud infrastructure API call logged for audit and compliance purposes."
+
+    @staticmethod
+    def generate_cluster_narrative(cluster_id: str, count: int, top_terms: List[str]) -> str:
+        """Create a readable description of a log cluster."""
+        term_str = ", ".join(top_terms[:3]) if top_terms else "N/A"
+        return f"{cluster_id} contains {count} related log entries primarily involving: {term_str}."
+
+    @staticmethod
+    def generate_transition_narrative(transition: str) -> str:
+        """Create a readable description of an event sequence."""
+        parts = transition.split(" -> ")
+        if len(parts) == 2:
+            from_state = parts[0].replace(" ", " ").strip()
+            to_state = parts[1].replace(" ", " ").strip()
+            return f"System transitioned from '{from_state}' to '{to_state}'."
+        return f"Event sequence: {transition}."
+
+    @staticmethod
+    def generate_executive_summary(
+        total_logs: int,
+        severity: Dict[str, int],
+        top_keywords: List[Dict[str, int]],
+        cluster_count: int,
+    ) -> str:
+        """Generate a high-level executive summary of the log analysis."""
+        error_count = severity.get("ERROR", 0)
+        warning_count = severity.get("WARNING", 0)
+        info_count = severity.get("INFO", 0)
+
+        # Build severity narrative
+        severity_parts = []
+        if error_count > 0:
+            severity_parts.append(f"{error_count} critical error{'s' if error_count != 1 else ''}")
+        if warning_count > 0:
+            severity_parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
+        if info_count > 0:
+            severity_parts.append(f"{info_count} info event{'s' if info_count != 1 else ''}")
+
+        severity_str = ", ".join(severity_parts) if severity_parts else "no significant events"
+
+        # Extract key themes from keywords
+        top_keywords_str = ", ".join([item["term"] for item in top_keywords[:3]])
+
+        # Build narrative
+        narrative = (
+            f"Log analysis processed {total_logs} entries and identified {severity_str}. "
+            f"The system exhibited behavior patterns involving {top_keywords_str}. "
+            f"Logs were grouped into {cluster_count} distinct behavior clusters. "
+        )
+
+        if error_count > 0:
+            narrative += "Immediate attention recommended for error resolution. "
+        elif warning_count > 0:
+            narrative += "Monitor system for potential issues. "
+        else:
+            narrative += "System operation appears normal. "
+
+        return narrative.strip()
+
+    @staticmethod
+    def generate_behavior_narrative(
+        top_keywords: List[Dict[str, int]], transitions: List[Dict[str, int]]
+    ) -> str:
+        """Generate a narrative about system behavior patterns."""
+        if not top_keywords:
+            return "No significant behavior patterns detected."
+
+        key_behaviors = [item["term"] for item in top_keywords[:4]]
+        behavior_str = ", ".join(key_behaviors)
+
+        narrative = f"The system displayed behavior involving {behavior_str}. "
+
+        if transitions:
+            top_transition = transitions[0]
+            transition_desc = NaturalLanguageGenerator.generate_transition_narrative(
+                top_transition.get("transition", "")
+            )
+            narrative += f"Primary transition pattern: {transition_desc}"
+
+        return narrative.strip()
+
+
+class InsightSummarizer:
+    def detect_severity(self, line: str) -> str:
+        lower = line.lower()
+        for severity, keywords in SEVERITY_KEYWORDS.items():
+            if any(keyword in lower for keyword in keywords):
+                return severity
+        return "INFO"
+
+    def severity_breakdown(self, raw_logs: List[str]) -> Dict[str, int]:
+        counts = {"ERROR": 0, "WARNING": 0, "INFO": 0}
+        for line in raw_logs:
+            counts[self.detect_severity(line)] += 1
+        return counts
+
+    def top_keywords(self, processed_logs: List[str], top_n: int = 12) -> List[Dict[str, int]]:
+        tokens: List[str] = []
+        for line in processed_logs:
+            tokens.extend([token for token in line.split() if len(token) > 2 and not token.isdigit()])
+
+        keyword_counts = Counter(tokens)
+        return [{"term": term, "count": count} for term, count in keyword_counts.most_common(top_n)]
+
+    def event_templates(self, templates: List[str], top_n: int = 8) -> List[Dict[str, int | str]]:
+        template_counts = Counter(templates)
+        return [{"template": temp, "count": count} for temp, count in template_counts.most_common(top_n)]
+
+    def sequence_transitions(self, templates: List[str], top_n: int = 8) -> List[Dict[str, int | str]]:
+        if len(templates) < 2:
+            return []
+
+        pairs = [f"{templates[i]} -> {templates[i + 1]}" for i in range(len(templates) - 1)]
+        pair_counts = Counter(pairs)
+        return [{"transition": pair, "count": count} for pair, count in pair_counts.most_common(top_n)]
+
+    def prioritize_incidents(self, records: List[Dict[str, str]]) -> List[Dict[str, str | int]]:
+        """Return ALL incidents sorted by severity score (ERROR first, then WARNING, INFO)."""
+        ranked: List[Tuple[int, Dict[str, str | int]]] = []
+        for item in records:
+            severity = self.detect_severity(item["raw"])
+            score = SEVERITY_PRIORITY[severity]
+            ranked.append(
+                (
+                    score,
+                    {
+                        "severity": severity,
+                        "timestamp": item["timestamp"],
+                        "message": item["raw"],
+                        "template": item["template"],
+                        "priority_score": score,
+                    },
+                )
+            )
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        return [payload for _, payload in ranked]
+
+    def timeline(self, records: List[Dict[str, str]], max_items: int = 25) -> List[Dict[str, str]]:
+        return [
+            {
+                "timestamp": item["timestamp"],
+                "severity": self.detect_severity(item["raw"]),
+                "event": item["template"],
+            }
+            for item in records[:max_items]
+        ]
+
+    def generate_summary(
+        self,
+        raw_logs: List[str],
+        processed_logs: List[str],
+        templates: List[str],
+        records: List[Dict[str, str]],
+        cluster_distribution: Dict[str, int],
+        top_terms_per_cluster: Dict[str, List[str]],
+    ) -> Dict[str, object]:
+        total_logs = len(raw_logs)
+        severity = self.severity_breakdown(raw_logs)
+        top_terms = self.top_keywords(processed_logs)
+        event_templates = self.event_templates(templates)
+        transitions = self.sequence_transitions(templates)
+        prioritized_incidents = self.prioritize_incidents(records)
+
+        # Generate natural language narratives
+        nlg = NaturalLanguageGenerator()
+        executive_summary = nlg.generate_executive_summary(
+            total_logs=total_logs,
+            severity=severity,
+            top_keywords=top_terms,
+            cluster_count=len(cluster_distribution),
+        )
+        behavior_narrative = nlg.generate_behavior_narrative(top_terms, transitions)
+
+        # Generate human-readable incident descriptions
+        incident_narratives = [
+            nlg.generate_incident_narrative(incident) for incident in prioritized_incidents
+        ]
+
+        # Generate cluster descriptions
+        cluster_narratives = []
+        for cluster_id, count in sorted(cluster_distribution.items(), key=lambda x: x[1], reverse=True)[:5]:
+            top_terms_for_cluster = top_terms_per_cluster.get(cluster_id, [])
+            narrative = nlg.generate_cluster_narrative(cluster_id, count, top_terms_for_cluster)
+            cluster_narratives.append(narrative)
+
+        # Generate transition narratives
+        transition_narratives = [
+            {"transition": t["transition"], "narrative": nlg.generate_transition_narrative(t["transition"]), "count": t["count"]}
+            for t in transitions[:4]
+        ]
+
+        return {
+            "executive_summary": executive_summary,
+            "behavior_narrative": behavior_narrative,
+            "incident_narratives": incident_narratives,
+            "cluster_narratives": cluster_narratives,
+            "transition_narratives": transition_narratives,
+            "severity": severity,
+            "top_keywords": top_terms,
+            "event_templates": event_templates,
+            "sequence_transitions": transitions,
+            "cluster_distribution": cluster_distribution,
+            "top_terms_per_cluster": top_terms_per_cluster,
+            "prioritized_incidents": prioritized_incidents,
+            "timeline": self.timeline(records),
+        }
