@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Upload,
   BarChart3,
-  ScrollText,
   BellRing,
   Settings2,
   CloudLightning,
@@ -28,7 +27,6 @@ const nav = [
     items: [
       { to: "/analysis",  label: "Log Analysis",        icon: BarChart3 },
       { to: "/security",  label: "Security Incidents",  icon: ShieldAlert, badge: "New" },
-      { to: "/summaries", label: "Summaries",           icon: ScrollText },
       { to: "/alerts",    label: "System Alerts",       icon: BellRing, badge: "Live" },
     ],
   },

@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from drain3 import TemplateMiner
 from drain3.template_miner_config import TemplateMinerConfig
 
@@ -148,8 +148,34 @@ def preprocess_logs(lines: List[str]) -> List[str]:
     return processed
 
 
-def preprocess_with_metadata(lines: List[str]) -> List[Dict[str, str]]:
-    records: List[Dict[str, str]] = []
+def extract_metadata_from_log(raw: str) -> Dict[str, str]:
+    metadata = {}
+    
+    # Extract Service name (e.g. s3.amazonaws.com -> s3)
+    service_match = re.search(r'\[([a-zA-Z0-9.\-_]+\.amazonaws\.com)\]', raw)
+    if service_match: metadata["Service"] = service_match.group(1).split('.')[0].upper()
+    
+    # Extract IP
+    ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', raw)
+    if ip_match: metadata["IP"] = ip_match.group(0)
+        
+    # Extract EC2 Instance
+    ec2_match = re.search(r'i-[0-9a-fA-F]{8,17}', raw)
+    if ec2_match: metadata["EC2"] = ec2_match.group(0)
+        
+    # Extract Region
+    region_match = re.search(r'(us|eu|ap|sa|ca|me|af)-(east|west|central|north|south)-\d', raw)
+    if region_match: metadata["Region"] = region_match.group(0)
+        
+    # Extract User
+    user_match = re.search(r'user[=:\s]+([a-zA-Z0-9.\-_]+)', raw, re.IGNORECASE)
+    if user_match: metadata["User"] = user_match.group(1)
+        
+    return metadata
+
+
+def preprocess_with_metadata(lines: List[str]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
     miner = build_drain_parser()
     
     for line in lines:
@@ -167,6 +193,7 @@ def preprocess_with_metadata(lines: List[str]) -> List[Dict[str, str]]:
                 "clean": clean_line,
                 "template": template,
                 "explanation": explain_log_line(line),
+                "metadata": extract_metadata_from_log(line),
             }
         )
 

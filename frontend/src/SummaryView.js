@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   BarChart,
   Bar,
@@ -11,10 +11,12 @@ import {
   Cell,
   CartesianGrid,
 } from "recharts";
+import LogDetailModal from "./components/LogDetailModal";
 
 const COLORS = ["#d62828", "#ffb703", "#2a9d8f", "#0077b6", "#6a4c93"];
 
 function SummaryView({ analysis }) {
+  const [selectedIncident, setSelectedIncident] = useState(null);
   if (!analysis) {
     return (
       <section className="card">
@@ -133,6 +135,26 @@ function SummaryView({ analysis }) {
                       </div>
                     </div>
                   </div>
+
+                  {incident.metadata && Object.keys(incident.metadata).length > 0 && (
+                    <details style={{ marginTop: "12px", padding: "8px", backgroundColor: "#fbfbfb", borderRadius: "6px", border: "1px solid #eee" }}>
+                      <summary style={{ cursor: "pointer", fontWeight: "bold", fontSize: "0.9rem", color: "#0077b6" }}>View Extracted Metadata</summary>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
+                        {Object.entries(incident.metadata).map(([key, val]) => (
+                          <span key={key} style={{ fontSize: "0.8rem", padding: "4px 8px", backgroundColor: "#e0fbfc", color: "#0077b6", borderRadius: "4px", fontWeight: "500" }}>
+                            {key}: {val}
+                          </span>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  <button
+                    onClick={() => setSelectedIncident(incident)}
+                    style={{ marginTop: "10px", background: "linear-gradient(135deg, #0077b6, #00b4d8)", color: "#fff", border: "none", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontSize: "0.82rem", fontWeight: "600" }}
+                  >
+                    🔍 Run Deep AI Analysis
+                  </button>
                 </div>
               ))}
             </div>
@@ -200,6 +222,10 @@ function SummaryView({ analysis }) {
             ))}
           </div>
         </div>
+      )}
+
+      {selectedIncident && (
+        <LogDetailModal incident={selectedIncident} onClose={() => setSelectedIncident(null)} />
       )}
     </section>
   );

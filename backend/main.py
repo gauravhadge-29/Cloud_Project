@@ -9,7 +9,7 @@ from clustering import LogClusterer
 from database import get_recent_analyses, save_analysis
 from log_processor import parse_log_text, preprocess_with_metadata
 from summarizer import InsightSummarizer
-from gemini_service import analyze_security_incidents
+from gemini_service import analyze_security_incidents, analyze_single_log
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -134,3 +134,20 @@ class AnomaliesPayload(BaseModel):
 async def analyze_security(payload: AnomaliesPayload) -> Dict[str, str]:
     analysis = analyze_security_incidents(payload.anomalies)
     return {"analysis": analysis}
+
+
+class LogDetailPayload(BaseModel):
+    log_line: str
+    template: Optional[str] = ""
+    severity: Optional[str] = ""
+    metadata: Optional[Dict[str, str]] = {}
+
+@app.post("/api/analyze-log")
+async def analyze_log_detail(payload: LogDetailPayload) -> Dict[str, Any]:
+    result = analyze_single_log(
+        log_line=payload.log_line,
+        template=payload.template or "",
+        severity=payload.severity or "",
+        metadata=payload.metadata or {},
+    )
+    return result

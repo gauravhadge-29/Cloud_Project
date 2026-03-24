@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import LogDetailModal from "./components/LogDetailModal";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 
@@ -7,6 +8,7 @@ function Dashboard({ latestAnalysis }) {
   const [history, setHistory] = useState([]);
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("ALL");
+  const [selectedIncident, setSelectedIncident] = useState(null);
 
   const fetchHistory = async () => {
     try {
@@ -73,6 +75,24 @@ function Dashboard({ latestAnalysis }) {
                   <span className={`sev ${item.severity}`}>{item.severity}</span> | {item.timestamp}
                 </div>
                 <p>{item.message}</p>
+                {item.metadata && Object.keys(item.metadata).length > 0 && (
+                  <details style={{ marginTop: "8px" }}>
+                    <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "#0077b6", fontWeight: "bold" }}>View Details</summary>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
+                      {Object.entries(item.metadata).map(([key, val]) => (
+                        <span key={key} style={{ fontSize: "0.75rem", padding: "2px 6px", backgroundColor: "#e2e8f0", color: "#334155", borderRadius: "4px" }}>
+                          <strong>{key}:</strong> {val}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                <button
+                  onClick={() => setSelectedIncident(item)}
+                  style={{ marginTop: "8px", background: "none", border: "1px solid #0077b6", color: "#0077b6", borderRadius: "6px", padding: "3px 10px", cursor: "pointer", fontSize: "0.8rem", fontWeight: "600" }}
+                >
+                  🔍 Analyze
+                </button>
               </article>
             ))}
           </div>
@@ -120,6 +140,10 @@ function Dashboard({ latestAnalysis }) {
           </div>
         </div>
       </div>
+
+      {selectedIncident && (
+        <LogDetailModal incident={selectedIncident} onClose={() => setSelectedIncident(null)} />
+      )}
     </section>
   );
 }

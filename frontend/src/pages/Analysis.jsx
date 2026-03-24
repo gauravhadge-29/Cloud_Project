@@ -7,8 +7,9 @@ import {
   ArrowUpDown, Filter, X,
   ArrowUp, ArrowDown,
 } from "lucide-react";
-import { FrequencyLine, KeywordsBar, SeverityPie, SeverityTimeline } from "../components/Charts";
+
 import StatsCard from "../components/StatsCard";
+import LogDetailModal from "../components/LogDetailModal";
 import { cn } from "../lib/utils";
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
@@ -54,19 +55,19 @@ function detectLevel(raw = "") {
 }
 
 // ── LogEntryCard ──────────────────────────────────────────────────────
-function LogEntryCard({ row, globalIdx }) {
+function LogEntryCard({ row, globalIdx, onAnalyze }) {
   const level = detectLevel(row.raw);
   const t     = SEV[level];
 
   return (
     <motion.li
-      initial={{ opacity: 0, y: 4 }}
+      initial={{ opacity: 0, y: 5 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
-      className="flex"
+      transition={{ duration: 0.2 }}
+      className="flex overflow-hidden rounded-xl border border-slate-200/60 bg-white/40 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.05)] backdrop-blur-sm transition-all hover:bg-white/80 dark:border-slate-800/60 dark:bg-slate-900/40 dark:hover:bg-slate-900/60"
     >
-      <div className={cn("w-[3px] flex-shrink-0", t.stripe)} />
+      <div className={cn("w-[4px] flex-shrink-0", t.stripe)} />
       <div className="flex-1 px-5 py-4 space-y-3">
 
         {/* Header */}
@@ -81,10 +82,23 @@ function LogEntryCard({ row, globalIdx }) {
               {row.timestamp}
             </span>
           )}
+
           <span className="ml-auto font-mono text-[11px] font-semibold text-slate-300 dark:text-slate-600 tabular-nums select-none">
             #{String(globalIdx + 1).padStart(3, "0")}
           </span>
         </div>
+
+        {/* Metadata Tags */}
+        {row.metadata && Object.keys(row.metadata).length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {Object.entries(row.metadata).map(([key, value]) => (
+              <span key={key} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200/50 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/30 px-2 py-0.5 text-[10px] font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                <span className="text-slate-400 dark:text-slate-500/80 uppercase tracking-widest text-[9px]">{key}</span> 
+                <span className="text-slate-600 dark:text-slate-300 font-mono tracking-tight">{value}</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Two columns */}
         <div className="grid gap-3 md:grid-cols-2">
@@ -102,6 +116,16 @@ function LogEntryCard({ row, globalIdx }) {
               {row.explanation || "Routine cloud infrastructure API call — no error or anomaly detected."}
             </div>
           </div>
+        </div>
+
+        {/* Analyze button */}
+        <div>
+          <button
+            onClick={() => onAnalyze({ message: row.raw, timestamp: row.timestamp, severity: level, template: row.template || "", metadata: {} })}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400 bg-violet-50 dark:bg-violet-950/20 px-3 py-1.5 text-[11px] font-semibold text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-950/40 transition-colors"
+          >
+            🔍 Deep Analysis
+          </button>
         </div>
 
       </div>
@@ -167,9 +191,10 @@ export default function AnalysisPage({ analysis }) {
   const total    = analysis?.total_logs ?? null;
 
   const [page,          setPage]          = useState(1);
-  const [filterLevel,   setFilterLevel]   = useState("ALL");   // ALL | ERROR | WARNING | INFO
+  const [filterLevel,   setFilterLevel]   = useState("ALL");
   const [sortKey,       setSortKey]       = useState("default");
   const [sortOpen,      setSortOpen]      = useState(false);
+  const [selectedLog,   setSelectedLog]   = useState(null);
 
   // ── Counts come from the backend summary (covers ALL logs, not just the preview) ──
   const counts = {
@@ -249,15 +274,7 @@ export default function AnalysisPage({ analysis }) {
           icon={Hash} tone="slate" />
       </motion.section>
 
-      {/* ── Charts ── */}
-      <motion.section variants={fadeUp} className="grid gap-4 lg:grid-cols-2">
-        <SeverityPie severity={sev} />
-        <KeywordsBar keywords={keywords} />
-      </motion.section>
-      <motion.section variants={fadeUp} className="grid gap-4 lg:grid-cols-2">
-        <FrequencyLine timeline={timeline} />
-        <SeverityTimeline timeline={timeline} />
-      </motion.section>
+
 
       {/* ── Processed Log Entries ── */}
       <motion.section
@@ -438,18 +455,30 @@ export default function AnalysisPage({ analysis }) {
           </div>
         ) : (
           <>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800/70">
-              <AnimatePresence mode="wait">
-                {pageItems.map((row, i) => (
-                  <LogEntryCard key={`${row.timestamp}-${start + i}-${filterLevel}-${sortKey}`} row={row} globalIdx={start + i} />
-                ))}
-              </AnimatePresence>
-            </ul>
+            <div className="p-4 sm:p-6">
+              <ul className="flex flex-col gap-4">
+                <AnimatePresence mode="wait">
+                  {pageItems.map((row, i) => (
+                    <LogEntryCard
+                      key={`${row.timestamp}-${start + i}-${filterLevel}-${sortKey}`}
+                      row={row}
+                      globalIdx={start + i}
+                      onAnalyze={setSelectedLog}
+                    />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            </div>
             <Pagination page={safePage} totalPages={totalPages} onChange={handlePageChange} />
           </>
         )}
 
       </motion.section>
+
+      {selectedLog && (
+        <LogDetailModal incident={selectedLog} onClose={() => setSelectedLog(null)} />
+      )}
+
     </motion.div>
   );
 }

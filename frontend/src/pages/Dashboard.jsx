@@ -5,7 +5,7 @@ import {
   TrendingUp, Layers, ArrowRight, Activity, RefreshCw
 } from "lucide-react";
 import StatsCard from "../components/StatsCard";
-import { FrequencyLine, KeywordsBar, SeverityPie, SeverityTimeline } from "../components/Charts";
+
 import SummaryCard from "../components/SummaryCard";
 import { formatNumber } from "../lib/utils";
 import { Link } from "react-router-dom";
@@ -104,17 +104,7 @@ export default function DashboardPage({ analysis }) {
         />
       </motion.section>
 
-      {/* ── Charts row ──────────────────────────────────── */}
-      <motion.section variants={item} className="grid gap-3 lg:grid-cols-3">
-        <SeverityPie severity={severity} />
-        <KeywordsBar keywords={keywords} />
-        <FrequencyLine timeline={timeline} />
-      </motion.section>
 
-      {/* ── Severity timeline ────────────────────────────── */}
-      <motion.section variants={item}>
-        <SeverityTimeline timeline={timeline} />
-      </motion.section>
 
       {/* ── Executive summary + top incidents ───────────── */}
       <motion.section variants={item} className="grid gap-4 lg:grid-cols-2">
@@ -141,10 +131,10 @@ export default function DashboardPage({ analysis }) {
 
           {hasData && (
             <Link
-              to="/summaries"
+              to="/analysis"
               className="mt-4 inline-flex items-center gap-1.5 text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:underline"
             >
-              View all summaries <ArrowRight className="h-3.5 w-3.5" />
+              View full analysis <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           )}
         </div>

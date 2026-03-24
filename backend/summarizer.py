@@ -3,14 +3,18 @@ from typing import Dict, List, Tuple
 import networkx as nx
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+import re
 
-_t5_pipeline = None
-def get_t5_pipeline():
-    global _t5_pipeline
-    if _t5_pipeline is None:
-        _t5_pipeline = pipeline("summarization", model="t5-small", framework="pt")
-    return _t5_pipeline
+_t5_tokenizer = None
+_t5_model = None
+
+def get_t5_model_tokenizer():
+    global _t5_model, _t5_tokenizer
+    if _t5_model is None:
+        _t5_tokenizer = AutoTokenizer.from_pretrained("t5-small")
+        _t5_model = AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+    return _t5_model, _t5_tokenizer
 
 SEVERITY_KEYWORDS = {
     "ERROR": ["error", "failed", "exception", "timeout", "unavailable", "critical", "denied"],
@@ -113,14 +117,20 @@ class NaturalLanguageGenerator:
         """Generate a high-level executive summary using abstractive T5 summarization."""
         error_count = severity.get("ERROR", 0)
         
-        prompt = f"summarize: The system processed {total_logs} logs with {error_count} errors. Main events: {extractive_text}"
+        prompt = f"summarize: The system processed {total_logs} logs with {error_count} errors across {cluster_count} clusters. {extractive_text}"
         try:
-            summarizer = get_t5_pipeline()
+            model, tokenizer = get_t5_model_tokenizer()
             # T5 requires appropriate max length
             input_len = len(prompt.split())
-            max_len = max(30, min(100, input_len + 20))
-            out = summarizer(prompt, max_length=max_len, min_length=10, do_sample=False)
-            narrative = out[0]['summary_text']
+            max_len = max(35, min(100, input_len + 30))
+            
+            inputs = tokenizer(prompt, return_tensors="pt")
+            outputs = model.generate(**inputs, max_length=max_len, min_length=15, do_sample=False)
+            narrative = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # Capitalize first letter cleanly
+            if narrative:
+                narrative = narrative[0].upper() + narrative[1:]
         except Exception as e:
             narrative = f"Analysis of {total_logs} logs (T5 abstractive generation failed: {str(e)}). Fallback: {extractive_text[:100]}..."
 
@@ -164,12 +174,42 @@ class InsightSummarizer:
         return counts
 
     def top_keywords(self, processed_logs: List[str], top_n: int = 12) -> List[Dict[str, int]]:
-        tokens: List[str] = []
-        for line in processed_logs:
-            tokens.extend([token for token in line.split() if len(token) > 2 and not token.isdigit()])
+        if not processed_logs:
+            return []
 
-        keyword_counts = Counter(tokens)
-        return [{"term": term, "count": count} for term, count in keyword_counts.most_common(top_n)]
+        # Domain-specific and system stop words
+        stop_words = {
+            'amazonaws', 'com', 'net', 'org', 'info', 'warn', 'error', 'debug', 
+            'success', 'failed', 'user', 'req', 'root', 'admin', 'http', 'https',
+            '<id>', '<ip>', '<num>', '<timestamp>', '<hex>', 'date', 'time', 'ec2'
+        }
+
+        filtered_logs = []
+        for line in processed_logs:
+            tokens = [t.lower() for t in line.split() if len(t) > 2 and not t.isdigit() and t.lower() not in stop_words]
+            filtered_logs.append(" ".join(tokens))
+            
+        if not any(filtered_logs):
+            return []
+
+        try:
+            vectorizer = TfidfVectorizer(max_df=0.85)
+            tfidf_matrix = vectorizer.fit_transform(filtered_logs)
+            feature_names = vectorizer.get_feature_names_out()
+            sum_tfidf = tfidf_matrix.sum(axis=0).A1
+            
+            term_scores = [(feature_names[i], sum_tfidf[i]) for i in range(len(feature_names))]
+            term_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # Scale scores to make them nice integers for the frontend bar chart
+            return [{"term": term, "count": int(score * 20)} for term, score in term_scores[:top_n] if score > 0]
+        except Exception:
+            # Fallback
+            tokens = []
+            for line in filtered_logs:
+                tokens.extend(line.split())
+            counts = Counter(tokens)
+            return [{"term": term, "count": count} for term, count in counts.most_common(top_n)]
 
     def event_templates(self, templates: List[str], top_n: int = 8) -> List[Dict[str, int | str]]:
         template_counts = Counter(templates)
@@ -183,21 +223,47 @@ class InsightSummarizer:
         pair_counts = Counter(pairs)
         return [{"transition": pair, "count": count} for pair, count in pair_counts.most_common(top_n)]
 
-    def prioritize_incidents(self, records: List[Dict[str, str]]) -> List[Dict[str, str | int]]:
+    def prioritize_incidents(self, records: List[Dict[str, str]]) -> List[Dict[str, object]]:
         """Return ALL incidents sorted by severity score (ERROR first, then WARNING, INFO)."""
-        ranked: List[Tuple[int, Dict[str, str | int]]] = []
+        ranked: List[Tuple[int, Dict[str, object]]] = []
         for item in records:
-            severity = self.detect_severity(item["raw"])
+            raw = item["raw"]
+            severity = self.detect_severity(raw)
             score = SEVERITY_PRIORITY[severity]
+            
+            # --- Extract Metadata ---
+            metadata = {}
+            
+            # Extract IP
+            ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', raw)
+            if ip_match: metadata["IP Address"] = ip_match.group(0)
+                
+            # Extract EC2 Instance
+            ec2_match = re.search(r'i-[0-9a-fA-F]{8,17}', raw)
+            if ec2_match: metadata["EC2 Instance"] = ec2_match.group(0)
+                
+            # Extract Region
+            region_match = re.search(r'(us|eu|ap|sa|ca|me|af)-(east|west|central|north|south)-\d', raw)
+            if region_match: metadata["Region"] = region_match.group(0)
+                
+            # Extract User
+            user_match = re.search(r'user[=:\s]+([a-zA-Z0-9.\-_]+)', raw, re.IGNORECASE)
+            if user_match: metadata["User"] = user_match.group(1)
+                
+            # Extract Request ID
+            req_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', raw)
+            if req_match: metadata["Request ID"] = req_match.group(0)
+            
             ranked.append(
                 (
                     score,
                     {
                         "severity": severity,
                         "timestamp": item["timestamp"],
-                        "message": item["raw"],
+                        "message": raw,
                         "template": item["template"],
                         "priority_score": score,
+                        "metadata": metadata
                     },
                 )
             )
@@ -248,14 +314,15 @@ class InsightSummarizer:
 
         # Generate natural language narratives
         nlg = NaturalLanguageGenerator()
+        behavior_narrative = nlg.generate_behavior_narrative(top_terms, transitions)
+
         executive_summary = nlg.generate_executive_summary(
             total_logs=total_logs,
             severity=severity,
             top_keywords=top_terms,
             cluster_count=len(cluster_distribution),
-            extractive_text=extractive_summary
+            extractive_text=behavior_narrative
         )
-        behavior_narrative = nlg.generate_behavior_narrative(top_terms, transitions)
 
         # Generate human-readable incident descriptions
         incident_narratives = [

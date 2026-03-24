@@ -7,6 +7,8 @@ import {
   XOctagon, Server, Lock, Fingerprint
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import LogDetailModal from "../components/LogDetailModal";
+import axios from "axios";
 
 const PAGE_SIZE = 6;
 
@@ -169,13 +171,48 @@ function Pagination({ page, totalPages, onChange }) {
 }
 
 // ── Anomaly Card ──────────────────────────────────────────────────────
-function AnomalyCard({ anomaly, idx }) {
+function AnomalyCard({ anomaly, idx, onAnalyze }) {
   const [open, setOpen] = useState(false);
   const cfg = SEV_MAP[anomaly.severity] || SEV_MAP.LOW;
   const Icon = anomaly.icon;
 
   const displayTime = new Date(anomaly.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const tz = new Date(anomaly.time).toLocaleTimeString('en-US', { timeZoneName: 'short' }).split(' ')[2];
+
+  // NLP summaries keyed to anomaly type
+  const NLP_SUMMARIES = {
+    AUTH: {
+      summary: "One or more authentication or IAM privilege failures were detected in a short window. This pattern may indicate credential stuffing, misconfigured roles, or an active lateral movement attempt.",
+      action: "Immediately review IAM CloudTrail logs for the affected principal. Check for recent permission changes, rotate credentials if compromised, and enforce MFA on all human IAM users."
+    },
+    ABUSE: {
+      summary: "The API call rate exceeded normal thresholds. This can be caused by a runaway process, a misconfigured integration, or an adversary probing the API surface.",
+      action: "Identify the source IP and IAM entity making the calls. Apply API throttling policies or resource-based conditions in IAM to rate-limit the caller. Open a support case if limits are unexpectedly low."
+    },
+    PROBE: {
+      summary: "Multiple \"resource not found\" errors were detected in quick succession. This is a common signature of automated reconnaissance tools scanning for misconfigured or publicly accessible cloud resources.",
+      action: "Review CloudTrail for the calling identity and source IP. Block the IP at the security group or WAF level if malicious. Audit S3 bucket and Lambda configurations for unintended public access."
+    },
+    BURST: {
+      summary: "A sudden spike of errors occurred in a 5-minute window. This is usually triggered by a service outage, auto-scaling misconfiguration, or a cascading failure across dependent services.",
+      action: "Check service health dashboards and CloudWatch alarms. Review recent deployments or configuration changes. Trigger on-call escalation if the error rate has not recovered in 10 minutes."
+    },
+  };
+
+  const nlp = NLP_SUMMARIES[anomaly.type] || {
+    summary: "A security-relevant event cluster was detected. Review the captured evidence below for context.",
+    action: "Investigate the related log entries and correlate with CloudTrail and CloudWatch for full context."
+  };
+
+  // Build a synthetic incident object for the modal
+  const representativeLog = anomaly.logs?.[0];
+  const syntheticIncident = {
+    message: representativeLog?.raw || anomaly.desc,
+    timestamp: anomaly.time,
+    severity: anomaly.severity === "HIGH" ? "ERROR" : anomaly.severity === "MEDIUM" ? "WARNING" : "INFO",
+    template: anomaly.name,
+    metadata: {},
+  };
 
   return (
     <motion.div
@@ -242,10 +279,24 @@ function AnomalyCard({ anomaly, idx }) {
             className="overflow-hidden"
           >
             <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 p-4 pl-5 pt-3">
+
+              {/* NLP Summary */}
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">NLP Summary</p>
+                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">{nlp.summary}</p>
+              </div>
+
+              {/* Recommended Action */}
+              <div className="rounded-lg border border-emerald-200 dark:border-emerald-800/40 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Recommended Action</p>
+                <p className="text-xs text-emerald-900 dark:text-emerald-200 leading-relaxed">{nlp.action}</p>
+              </div>
+
+              {/* Evidence */}
               <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                 <Fingerprint className="h-3 w-3" /> Event Evidence ({Math.min(anomaly.logs.length, 50)} captured)
               </div>
-              <ul className="space-y-1.5 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+              <ul className="space-y-1.5 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                 {anomaly.logs.slice(0, 50).map((l, i) => (
                   <li key={i} className="rounded-lg border border-slate-700/40 bg-[#0d1117] px-3 py-2">
                     <div className="flex items-center gap-2 mb-1">
@@ -259,6 +310,15 @@ function AnomalyCard({ anomaly, idx }) {
                   </li>
                 ))}
               </ul>
+
+              {/* Deep Analysis button */}
+              <button
+                onClick={() => onAnalyze(syntheticIncident)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400 bg-violet-50 dark:bg-violet-950/20 px-3 py-1.5 text-[11px] font-semibold text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-950/40 transition-colors"
+              >
+                🔍 Deep Analysis
+              </button>
+
             </div>
           </motion.div>
         )}
@@ -273,6 +333,7 @@ export default function SecurityPage({ analysis }) {
   const [page, setPage] = useState(1);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [selectedAnomaly, setSelectedAnomaly] = useState(null);
 
   const anomalies = useMemo(() => {
     if (!analysis || !analysis.processed_preview) return DEMO_ANOMALIES;
@@ -406,7 +467,7 @@ export default function SecurityPage({ analysis }) {
           <div className="space-y-2">
             <AnimatePresence mode="wait">
               {pageItems.map((anomaly, idx) => (
-                <AnomalyCard key={anomaly.id} anomaly={anomaly} idx={idx} />
+                <AnomalyCard key={anomaly.id} anomaly={anomaly} idx={idx} onAnalyze={setSelectedAnomaly} />
               ))}
             </AnimatePresence>
             <Pagination page={safePage} totalPages={totalPages} onChange={handlePageChange} />
@@ -414,6 +475,9 @@ export default function SecurityPage({ analysis }) {
         )}
       </div>
 
+      {selectedAnomaly && (
+        <LogDetailModal incident={selectedAnomaly} onClose={() => setSelectedAnomaly(null)} />
+      )}
     </div>
   );
 }
